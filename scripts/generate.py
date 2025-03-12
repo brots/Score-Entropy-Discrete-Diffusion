@@ -56,7 +56,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint', type=str, required=True, help='Path to checkpoint file')
     parser.add_argument('--num_samples', type=int, default=5, help='Number of samples to generate')
-    parser.add_argument('--max_length', type=int, default=128, help='Maximum length of generated text')
+    parser.add_argument('--max_length', type=int, default=4, help='Maximum sequence length')
     parser.add_argument('--temperature', type=float, default=1.0, help='Sampling temperature (higher = more random)')
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu', help='Device to use')
     args = parser.parse_args()
