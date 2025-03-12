@@ -1,4 +1,3 @@
-
 import os
 import os.path
 import yaml
@@ -30,6 +29,11 @@ from aim import Run
 
 # from sedd.models.simple_sedd import SEDD
 from torch.utils.data import DataLoader
+from pathlib import Path
+from data.datasets import JSONLDataset
+from models.transformer import TransformerModel
+from tqdm import tqdm
+import wandb
 
 def print_devices(device):
     if torch.cuda.is_available():
@@ -45,6 +49,87 @@ def print_devices(device):
         print("WARNING: Using device {}".format(device))
     print(f"Using device: {device}")
     print(f"Found {os.cpu_count()} total number of CPUs.")
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, default='configs/default.yaml', help='Path to config file')
+    parser.add_argument('--train_data', type=str, required=True, help='Path to training JSONL file')
+    parser.add_argument('--max_length', type=int, default=512, help='Maximum sequence length')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--num_epochs', type=int, default=100, help='Number of epochs')
+    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate')
+    parser.add_argument('--save_dir', type=str, default='checkpoints', help='Directory to save checkpoints')
+    parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu', help='Device to use')
+    return parser.parse_args()
+
+def train(args):
+    # Load config
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    # Create save directory
+    save_dir = Path(args.save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize dataset and dataloader
+    dataset = JSONLDataset(args.train_data, max_length=args.max_length)
+    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    
+    # Initialize model
+    model = TransformerModel(
+        vocab_size=dataset.vocab_size,
+        max_length=args.max_length,
+        **config['model']
+    ).to(args.device)
+    
+    # Initialize optimizer
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate)
+    
+    # Initialize wandb
+    wandb.init(
+        project="text-diffusion",
+        config={
+            **vars(args),
+            **config
+        }
+    )
+    
+    # Training loop
+    for epoch in range(args.num_epochs):
+        model.train()
+        total_loss = 0
+        
+        with tqdm(dataloader, desc=f'Epoch {epoch+1}/{args.num_epochs}') as pbar:
+            for batch in pbar:
+                batch = batch.to(args.device)
+                
+                optimizer.zero_grad()
+                loss = model(batch)
+                loss.backward()
+                optimizer.step()
+                
+                total_loss += loss.item()
+                pbar.set_postfix({'loss': loss.item()})
+                
+                wandb.log({
+                    'loss': loss.item(),
+                    'epoch': epoch
+                })
+        
+        # Save checkpoint
+        if (epoch + 1) % 10 == 0:
+            checkpoint_path = save_dir / f'checkpoint_{epoch+1}.pth'
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'vocab': {
+                    'char_to_idx': dataset.char_to_idx,
+                    'idx_to_char': dataset.idx_to_char
+                }
+            }, checkpoint_path)
+            
+        print(f'Epoch {epoch+1} average loss: {total_loss/len(dataloader):.4f}')
 
 def main():
     args = argparse.ArgumentParser(description="Train SEDD")
@@ -155,6 +240,9 @@ def main():
     )
     trainer.train(train_ds)
 
+    # Parse command line arguments and train the model
+    args = parse_args()
+    train(args)
 
 if __name__ == "__main__":
     main()
